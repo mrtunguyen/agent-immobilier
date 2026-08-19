@@ -1,0 +1,251 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Rental Scout</title>
+<style>
+  :root {
+    --bg: #f7f7f5;
+    --surface: #ffffff;
+    --border: #e2e1dd;
+    --text: #1b1b19;
+    --muted: #6b6a66;
+    --accent: #2f5d50;
+    --good: #1f6f4a;
+    --mid: #8a6d1f;
+    --bad: #9a3d2e;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #16161a;
+      --surface: #1e1e23;
+      --border: #32323a;
+      --text: #ececf0;
+      --muted: #9b9ba5;
+      --accent: #7fb8a4;
+      --good: #6cc296;
+      --mid: #d6b45c;
+      --bad: #e08b78;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 2rem 1.25rem 4rem;
+    background: var(--bg);
+    color: var(--text);
+    font: 15px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  .wrap { max-width: 1200px; margin: 0 auto; }
+  header { margin-bottom: 1.5rem; }
+  h1 { margin: 0 0 .25rem; font-size: 1.5rem; letter-spacing: -.01em; }
+  .sub { color: var(--muted); font-size: .875rem; }
+  .stats { display: flex; flex-wrap: wrap; gap: .75rem; margin: 1.25rem 0; }
+  .stat {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 8px; padding: .6rem .9rem; min-width: 110px;
+  }
+  .stat b { display: block; font-size: 1.35rem; line-height: 1.2; }
+  .stat span { color: var(--muted); font-size: .75rem; text-transform: uppercase; letter-spacing: .04em; }
+  .controls { display: flex; flex-wrap: wrap; gap: .5rem; margin-bottom: 1rem; }
+  input, select {
+    background: var(--surface); color: var(--text);
+    border: 1px solid var(--border); border-radius: 6px;
+    padding: .45rem .6rem; font: inherit; font-size: .875rem;
+  }
+  input { flex: 1 1 220px; }
+  .table-scroll { overflow-x: auto; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
+  table { border-collapse: collapse; width: 100%; font-size: .875rem; }
+  th, td { padding: .6rem .7rem; text-align: left; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th {
+    position: sticky; top: 0; background: var(--surface);
+    font-size: .75rem; text-transform: uppercase; letter-spacing: .04em;
+    color: var(--muted); cursor: pointer; white-space: nowrap; user-select: none;
+  }
+  th[aria-sort="descending"]::after { content: " ↓"; }
+  th[aria-sort="ascending"]::after { content: " ↑"; }
+  tbody tr:last-child td { border-bottom: none; }
+  tbody tr:hover { background: color-mix(in srgb, var(--accent) 6%, transparent); }
+  .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .score { font-weight: 700; font-variant-numeric: tabular-nums; }
+  .score.good { color: var(--good); }
+  .score.mid  { color: var(--mid); }
+  .score.bad  { color: var(--bad); }
+  .title { max-width: 22rem; }
+  .title a { color: var(--text); text-decoration: none; font-weight: 600; }
+  .title a:hover { color: var(--accent); text-decoration: underline; }
+  .note { display: block; color: var(--muted); font-size: .8125rem; margin-top: .2rem; }
+  .flags { color: var(--bad); font-size: .8125rem; margin-top: .2rem; }
+  .tag {
+    display: inline-block; border: 1px solid var(--border); border-radius: 999px;
+    padding: .05rem .5rem; font-size: .75rem; color: var(--muted);
+  }
+  .hit { color: var(--good); font-size: .8125rem; }
+  .tag.retired { opacity: .55; text-decoration: line-through; }
+  .delta-up { color: var(--bad); }
+  .delta-down { color: var(--good); }
+  .empty { padding: 3rem 1rem; text-align: center; color: var(--muted); }
+  footer { margin-top: 1.5rem; color: var(--muted); font-size: .8125rem; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Rental Scout</h1>
+    <div class="sub">
+      Generated {{ generated_at }} · prices compared against DVF recorded sales
+    </div>
+  </header>
+
+  <div class="stats">
+    <div class="stat"><b>{{ total }}</b><span>Listings</span></div>
+    <div class="stat"><b>{{ above_threshold }}</b><span>Above notify bar ({{ threshold_label }})</span></div>
+    <div class="stat"><b>{{ counts.get('Interested', 0) }}</b><span>Interested</span></div>
+    <div class="stat"><b>{{ counts.get('Contacted', 0) }}</b><span>Contacted</span></div>
+    <div class="stat"><b>{{ last_run or '—' }}</b><span>Last run</span></div>
+  </div>
+
+  <div class="controls">
+    <input id="q" type="search" placeholder="Filter by title, city, postal code, site, profile…" aria-label="Filter listings">
+    <select id="minScore" aria-label="Minimum score">
+      <option value="0">Any score</option>
+      <option value="50">50+</option>
+      <option value="70" selected>70+</option>
+      <option value="85">85+</option>
+    </select>
+    <select id="statusFilter" aria-label="Status">
+      <option value="">All statuses</option>
+      {% for status in statuses %}<option value="{{ status }}">{{ status }}</option>{% endfor %}
+    </select>
+    {% if show_profiles %}
+    <select id="profileFilter" aria-label="Profile">
+      <option value="">All profiles</option>
+      {% for profile in profiles %}<option value="{{ profile }}">{{ profile }}</option>{% endfor %}
+    </select>
+    {% endif %}
+  </div>
+
+  {% if rows %}
+  <div class="table-scroll">
+    <table id="listings">
+      <thead>
+        <tr>
+          <th data-sort="num" aria-sort="descending">Score</th>
+          {% if show_profiles %}<th data-sort="text">Profile</th>{% endif %}
+          <th data-sort="text">Property</th>
+          <th data-sort="num" class="num">Price</th>
+          <th data-sort="num" class="num">m²</th>
+          <th data-sort="num" class="num">€/m²</th>
+          <th data-sort="num" class="num">vs DVF</th>
+          <th data-sort="num" class="num">Yield</th>
+          <th data-sort="text">Status</th>
+          <th data-sort="text">Seen</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for r in rows %}
+        <tr data-status="{{ r.status }}" data-score="{{ r.score if r.score is not none else -1 }}"
+            data-profile="{{ r.profile }}" data-search="{{ r.search_blob }}">
+          <td>
+            <span class="score {{ r.score_class }}">{{ r.score if r.score is not none else '—' }}</span>
+            {% if r.above_threshold %}<span class="hit" title="At or above this profile’s notify threshold">✓</span>{% endif %}
+          </td>
+          {% if show_profiles %}
+          <td><span class="tag{% if r.profile_retired %} retired{% endif %}"
+                    {% if r.profile_retired %}title="Not in the active profile set"{% endif %}>{{ r.profile_label }}</span></td>
+          {% endif %}
+          <td class="title">
+            <a href="{{ r.url }}" target="_blank" rel="noopener noreferrer">{{ r.title }}</a>
+            <span class="note">{{ r.location }} · {{ r.site }}{% if r.rooms %} · {{ r.rooms }}p{% endif %}{% if r.email_only %} · email only{% endif %}</span>
+            {% if r.analysis %}<span class="note">{{ r.analysis }}</span>{% endif %}
+            {% if r.red_flags %}<span class="flags">⚠ {{ r.red_flags }}</span>{% endif %}
+          </td>
+          <td class="num" data-value="{{ r.price_eur or 0 }}">{{ r.price_fmt }}</td>
+          <td class="num" data-value="{{ r.surface_m2 or 0 }}">{{ r.surface_fmt }}</td>
+          <td class="num" data-value="{{ r.price_per_sqm or 0 }}">
+            {{ r.price_per_sqm_fmt }}
+            {% if r.dvf_median %}<span class="note">DVF {{ r.dvf_median_fmt }}{% if r.dvf_sample %} · n={{ r.dvf_sample }}{% endif %}</span>{% endif %}
+          </td>
+          <td class="num {{ r.delta_class }}" data-value="{{ r.price_vs_dvf_pct if r.price_vs_dvf_pct is not none else 0 }}">{{ r.delta_fmt }}</td>
+          <td class="num" data-value="{{ r.gross_yield_pct or 0 }}">{{ r.yield_fmt }}</td>
+          <td><span class="tag">{{ r.status }}</span></td>
+          <td data-value="{{ r.first_seen_at }}">{{ r.first_seen_short }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="table-scroll"><p class="empty">No listings yet. Run the pipeline once your saved-search alerts start arriving.</p></div>
+  {% endif %}
+
+  <footer>
+    One row per listing per profile: a flat matching two searches is judged
+    once for each. Status is edited in Notion; this page is regenerated from the
+    pipeline's database on every run. Market comparisons use DVF (Demandes de Valeurs
+    Foncières), the French public register of recorded sale prices.
+  </footer>
+</div>
+
+<script>
+(function () {
+  const table = document.getElementById('listings');
+  if (!table) return;
+  const tbody = table.tBodies[0];
+  const rows = Array.from(tbody.rows);
+  const q = document.getElementById('q');
+  const minScore = document.getElementById('minScore');
+  const statusFilter = document.getElementById('statusFilter');
+  const profileFilter = document.getElementById('profileFilter');
+
+  function applyFilters() {
+    const needle = q.value.trim().toLowerCase();
+    const floor = Number(minScore.value);
+    const status = statusFilter.value;
+    const profile = profileFilter ? profileFilter.value : '';
+    for (const row of rows) {
+      const okScore = Number(row.dataset.score) >= floor;
+      const okStatus = !status || row.dataset.status === status;
+      const okProfile = !profile || row.dataset.profile === profile;
+      const okText = !needle || row.dataset.search.includes(needle);
+      row.hidden = !(okScore && okStatus && okProfile && okText);
+    }
+  }
+
+  function cellValue(row, index) {
+    const cell = row.cells[index];
+    const raw = cell.dataset.value;
+    return raw !== undefined ? raw : cell.textContent.trim();
+  }
+
+  table.tHead.addEventListener('click', (event) => {
+    const th = event.target.closest('th');
+    if (!th) return;
+    const index = Array.from(th.parentNode.children).indexOf(th);
+    const numeric = th.dataset.sort === 'num';
+    const descending = th.getAttribute('aria-sort') !== 'descending';
+
+    for (const other of th.parentNode.children) other.removeAttribute('aria-sort');
+    th.setAttribute('aria-sort', descending ? 'descending' : 'ascending');
+
+    rows.sort((a, b) => {
+      const av = cellValue(a, index), bv = cellValue(b, index);
+      const cmp = numeric
+        ? (Number(av) || 0) - (Number(bv) || 0)
+        : String(av).localeCompare(String(bv));
+      return descending ? -cmp : cmp;
+    });
+    for (const row of rows) tbody.appendChild(row);
+  });
+
+  q.addEventListener('input', applyFilters);
+  minScore.addEventListener('change', applyFilters);
+  statusFilter.addEventListener('change', applyFilters);
+  if (profileFilter) profileFilter.addEventListener('change', applyFilters);
+  applyFilters();
+})();
+</script>
+</body>
+</html>

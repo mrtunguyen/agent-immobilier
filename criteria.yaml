@@ -1,0 +1,108 @@
+# Rental-investment criteria. Edit freely — everything here is read at runtime.
+#
+# Two layers. Everything at the top level is the base: shared defaults, plus the
+# run-level settings (models, dvf, pipeline) that every search must agree on.
+# The optional `profiles:` block at the bottom names the searches you actually
+# want run, each overriding only the keys where it differs. With no `profiles:`
+# block the base is the single search, named "default".
+
+budget:
+  max_price_eur: 250000
+  min_price_eur: null
+
+# Cities you are willing to buy in. `postal_codes` drives both matching and the
+# DVF market lookup. `avg_price_per_sqm_eur` is only a fallback for communes
+# where DVF has too little data (see dvf.min_comparable_transactions).
+target_cities:
+  - name: "Montreuil"
+    postal_codes: ["93100"]
+    avg_rent_per_sqm_eur: 15.5
+    avg_price_per_sqm_eur: null
+
+min_surface_m2: 20
+min_rooms: 1
+# false = flag a rez-de-chaussée as a red flag rather than rejecting outright
+max_floor_ground_ok: false
+
+yield_thresholds:
+  min_gross_yield_pct: 5.5
+  target_gross_yield_pct: 7.0
+
+dpe:
+  acceptable_classes: ["A", "B", "C", "D"]
+  reject_below: null # e.g. "F" to hard-reject F and G
+
+red_flag_keywords:
+  - "travaux importants"
+  - "charges de copropriété élevées"
+  - "procédure en cours"
+  - "passoire thermique"
+  - "bail en cours"
+
+dvf:
+  lookback_years: 3
+  # Below this many comparable sales, the DVF median is treated as low-confidence.
+  min_comparable_transactions: 5
+  property_types: ["Appartement", "Maison"]
+
+scoring:
+  # Telegram push fires at or above this score.
+  score_threshold_notify: 70
+  weight_yield: 0.30
+  weight_price_vs_dvf: 0.25
+  weight_location: 0.20
+  weight_condition_red_flags: 0.25
+
+models:
+  # Gemini model ids. Confirm against the API before changing:
+  #   python -m scout.models
+  parsing_model: "gemini-3.6-flash"
+  analysis_model: "gemini-3.6-flash"
+
+pipeline:
+  # Cost guard: stop analysing after this many new listings in one run.
+  max_listings_per_run: 200
+  enrichment_fetch_timeout_s: 8
+  enrichment_max_retries: 1
+
+# ---------------------------------------------------------------------------
+# Multiple searches. Uncomment and edit to hunt for more than one kind of deal:
+# every new listing is matched against each profile and scored once per profile
+# it fits, so the same flat can be a buy for one search and a pass for another.
+#
+# A profile overrides base keys using the same nested shape as above. Lists
+# replace rather than extend. `cities:` is a shorthand for "only these entries
+# from target_cities" — use it instead of redefining postal codes. `label:` is
+# the human name shown in Telegram and on the dashboard, and `enabled: false`
+# parks a profile without deleting it.
+#
+# Run one profile at a time with: python -m scout --profile studio-cashflow
+#
+# models/dvf/pipeline are rejected inside a profile — they are shared per run.
+#
+# profiles:
+#   - name: "studio-cashflow"
+#     label: "Studio · cashflow"
+#     budget:
+#       max_price_eur: 150000
+#     min_surface_m2: 18
+#     min_rooms: 1
+#     yield_thresholds:
+#       min_gross_yield_pct: 7.0
+#       target_gross_yield_pct: 8.5
+#     cities: ["Lyon", "Villeurbanne"]
+#
+#   - name: "family-t3"
+#     label: "T3+ · long hold"
+#     budget:
+#       max_price_eur: 380000
+#     min_surface_m2: 60
+#     min_rooms: 3
+#     yield_thresholds:
+#       min_gross_yield_pct: 4.5
+#       target_gross_yield_pct: 6.0
+#     dpe:
+#       acceptable_classes: ["A", "B", "C"]
+#     scoring:
+#       score_threshold_notify: 75
+#     cities: ["Lyon"]

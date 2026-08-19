@@ -1,0 +1,52 @@
+name: rental-scout
+
+on:
+  schedule:
+    # Every 2 hours. Alert emails arrive throughout the day, and running often
+    # is what makes the Telegram push useful on a fast-moving market.
+    - cron: "0 */2 * * *"
+  workflow_dispatch: {}
+
+# The run commits data/ back to the repo, so two runs must never overlap.
+concurrency:
+  group: rental-scout
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      - name: Run the pipeline
+        env:
+          PYTHONPATH: src
+          GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
+        run: python -m scout
+
+      - name: Commit state and dashboard
+        run: |
+          git config user.name "rental-scout-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add data/ docs/index.html
+          git diff --cached --quiet && echo "nothing changed" && exit 0
+          git commit -m "chore: scout run $(date -u +%FT%TZ)"
+          # Another run may have pushed while this one was analysing.
+          git pull --rebase --autostash
+          git push

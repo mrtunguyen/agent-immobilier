@@ -1,0 +1,6 @@
+# The pipeline commits from Linux CI and is edited on Windows — normalise so
+# every run doesn't produce a whole-file diff.
+* text=auto eol=lf
+
+# SQLite state is binary; never let Git rewrite line endings inside it.
+*.sqlite3 binary

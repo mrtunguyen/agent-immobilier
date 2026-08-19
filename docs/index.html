@@ -1,0 +1,341 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Rental Scout</title>
+<style>
+  :root {
+    --bg: #f7f7f5;
+    --surface: #ffffff;
+    --border: #e2e1dd;
+    --text: #1b1b19;
+    --muted: #6b6a66;
+    --accent: #2f5d50;
+    --good: #1f6f4a;
+    --mid: #8a6d1f;
+    --bad: #9a3d2e;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #16161a;
+      --surface: #1e1e23;
+      --border: #32323a;
+      --text: #ececf0;
+      --muted: #9b9ba5;
+      --accent: #7fb8a4;
+      --good: #6cc296;
+      --mid: #d6b45c;
+      --bad: #e08b78;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 2rem 1.25rem 4rem;
+    background: var(--bg);
+    color: var(--text);
+    font: 15px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  .wrap { max-width: 1200px; margin: 0 auto; }
+  header { margin-bottom: 1.5rem; }
+  h1 { margin: 0 0 .25rem; font-size: 1.5rem; letter-spacing: -.01em; }
+  .sub { color: var(--muted); font-size: .875rem; }
+  .stats { display: flex; flex-wrap: wrap; gap: .75rem; margin: 1.25rem 0; }
+  .stat {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 8px; padding: .6rem .9rem; min-width: 110px;
+  }
+  .stat b { display: block; font-size: 1.35rem; line-height: 1.2; }
+  .stat span { color: var(--muted); font-size: .75rem; text-transform: uppercase; letter-spacing: .04em; }
+  .controls { display: flex; flex-wrap: wrap; gap: .5rem; margin-bottom: 1rem; }
+  input, select {
+    background: var(--surface); color: var(--text);
+    border: 1px solid var(--border); border-radius: 6px;
+    padding: .45rem .6rem; font: inherit; font-size: .875rem;
+  }
+  input { flex: 1 1 220px; }
+  .table-scroll { overflow-x: auto; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
+  table { border-collapse: collapse; width: 100%; font-size: .875rem; }
+  th, td { padding: .6rem .7rem; text-align: left; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th {
+    position: sticky; top: 0; background: var(--surface);
+    font-size: .75rem; text-transform: uppercase; letter-spacing: .04em;
+    color: var(--muted); cursor: pointer; white-space: nowrap; user-select: none;
+  }
+  th[aria-sort="descending"]::after { content: " ↓"; }
+  th[aria-sort="ascending"]::after { content: " ↑"; }
+  tbody tr:last-child td { border-bottom: none; }
+  tbody tr:hover { background: color-mix(in srgb, var(--accent) 6%, transparent); }
+  .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .score { font-weight: 700; font-variant-numeric: tabular-nums; }
+  .score.good { color: var(--good); }
+  .score.mid  { color: var(--mid); }
+  .score.bad  { color: var(--bad); }
+  .title { max-width: 22rem; }
+  .title a { color: var(--text); text-decoration: none; font-weight: 600; }
+  .title a:hover { color: var(--accent); text-decoration: underline; }
+  .note { display: block; color: var(--muted); font-size: .8125rem; margin-top: .2rem; }
+  .flags { color: var(--bad); font-size: .8125rem; margin-top: .2rem; }
+  .tag {
+    display: inline-block; border: 1px solid var(--border); border-radius: 999px;
+    padding: .05rem .5rem; font-size: .75rem; color: var(--muted);
+  }
+  .hit { color: var(--good); font-size: .8125rem; }
+  .tag.retired { opacity: .55; text-decoration: line-through; }
+  .delta-up { color: var(--bad); }
+  .delta-down { color: var(--good); }
+  .empty { padding: 3rem 1rem; text-align: center; color: var(--muted); }
+  footer { margin-top: 1.5rem; color: var(--muted); font-size: .8125rem; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Rental Scout</h1>
+    <div class="sub">
+      Generated 2026-08-19 21:06 UTC · prices compared against DVF recorded sales
+    </div>
+  </header>
+
+  <div class="stats">
+    <div class="stat"><b>5</b><span>Listings</span></div>
+    <div class="stat"><b>2</b><span>Above notify bar (70)</span></div>
+    <div class="stat"><b>0</b><span>Interested</span></div>
+    <div class="stat"><b>0</b><span>Contacted</span></div>
+    <div class="stat"><b>2026-08-19 21:06</b><span>Last run</span></div>
+  </div>
+
+  <div class="controls">
+    <input id="q" type="search" placeholder="Filter by title, city, postal code, site, profile…" aria-label="Filter listings">
+    <select id="minScore" aria-label="Minimum score">
+      <option value="0">Any score</option>
+      <option value="50">50+</option>
+      <option value="70" selected>70+</option>
+      <option value="85">85+</option>
+    </select>
+    <select id="statusFilter" aria-label="Status">
+      <option value="">All statuses</option>
+      <option value="New">New</option><option value="Interested">Interested</option><option value="Rejected">Rejected</option><option value="Contacted">Contacted</option>
+    </select>
+    
+  </div>
+
+  
+  <div class="table-scroll">
+    <table id="listings">
+      <thead>
+        <tr>
+          <th data-sort="num" aria-sort="descending">Score</th>
+          
+          <th data-sort="text">Property</th>
+          <th data-sort="num" class="num">Price</th>
+          <th data-sort="num" class="num">m²</th>
+          <th data-sort="num" class="num">€/m²</th>
+          <th data-sort="num" class="num">vs DVF</th>
+          <th data-sort="num" class="num">Yield</th>
+          <th data-sort="text">Status</th>
+          <th data-sort="text">Seen</th>
+        </tr>
+      </thead>
+      <tbody>
+      
+        <tr data-status="New" data-score="75"
+            data-profile="default" data-search="duplex à vendre montreuil 93100 seloger 93100 default">
+          <td>
+            <span class="score good">75</span>
+            <span class="hit" title="At or above this profile’s notify threshold">✓</span>
+          </td>
+          
+          <td class="title">
+            <a href="https://click.by.seloger.com?qs=ABB7InYiOjEsImQiOjQ5NzN9ADMAAAAAALqUliWGNtkXk8WUUkKslpG4ot8JIg4t79LQb_BYbSQyXWvsvkKeAW3rVGLC-ww49B-1sFbR0YEYLHrSs-5VhwGDP079SIPApmb5jmPj0PZdftQN" target="_blank" rel="noopener noreferrer">Duplex à vendre</a>
+            <span class="note">Montreuil 93100 · seloger · 2p · email only</span>
+            <span class="note">This duplex in Montreuil is a strong fit on paper, matching your target area and budget. Its asking price is an exceptional 46% below the DVF median for 93100, based on a large sample of sales. The estimated gross yield of 5.7% also meets your minimum requirement. However, the pr</span>
+            <span class="flags">⚠ Unusually low price suggests potential hidden issues</span>
+          </td>
+          <td class="num" data-value="160000">160 000 €</td>
+          <td class="num" data-value="48.9">48.9</td>
+          <td class="num" data-value="3272.0">
+            3 272
+            <span class="note">DVF 6 100 · n=3131</span>
+          </td>
+          <td class="num delta-down" data-value="-46.36">-46%</td>
+          <td class="num" data-value="5.69">5.7%</td>
+          <td><span class="tag">New</span></td>
+          <td data-value="2026-08-19T21:04:35+00:00">2026-08-19</td>
+        </tr>
+      
+        <tr data-status="New" data-score="70"
+            data-profile="default" data-search="appartement à vendre montreuil 93100 seloger 93100 default">
+          <td>
+            <span class="score good">70</span>
+            <span class="hit" title="At or above this profile’s notify threshold">✓</span>
+          </td>
+          
+          <td class="title">
+            <a href="https://click.by.seloger.com?qs=ABB7InYiOjEsImQiOjQ5NzN9ADMAAAAAALqUliWMl9O1bfjKEG0MQ9VSX_nbojCtXgEkJlcIy8X_1mXz4fiA7DUX-FyZuSq8dWih9j-H0xaoZbnwxlPsZpr59USsJyWOjmo5dHLGCG8ia1M7" target="_blank" rel="noopener noreferrer">Appartement à vendre</a>
+            <span class="note">Montreuil 93100 · seloger · 2p · email only</span>
+            <span class="note">This two-room apartment in the target area of Montreuil is attractively priced at 4.5% below the DVF median for the postal code. However, its investment potential is severely limited by a low estimated gross yield of 3.2%, which falls far short of your 5.5% minimum. While it meet</span>
+            
+          </td>
+          <td class="num" data-value="169000">169 000 €</td>
+          <td class="num" data-value="29.0">29</td>
+          <td class="num" data-value="5827.6">
+            5 828
+            <span class="note">DVF 6 100 · n=3131</span>
+          </td>
+          <td class="num delta-down" data-value="-4.46">-4%</td>
+          <td class="num" data-value="3.2">3.2%</td>
+          <td><span class="tag">New</span></td>
+          <td data-value="2026-08-19T21:04:35+00:00">2026-08-19</td>
+        </tr>
+      
+        <tr data-status="New" data-score="68"
+            data-profile="default" data-search="appartement à vendre montreuil 93100 seloger 93100 default">
+          <td>
+            <span class="score mid">68</span>
+            
+          </td>
+          
+          <td class="title">
+            <a href="https://click.by.seloger.com?qs=ABB7InYiOjEsImQiOjQ5NzN9ADMAAAAAALqUliWSfUyuuvUsmNz3IjJXcfeN-i2JGPzWKXzhWmSzLmYRMcTg3--StpelGfRwOJL0pQ7R_yu-bwZ9tLLlZM337pZnE4-014UZCf0jNHU9YCCJ" target="_blank" rel="noopener noreferrer">Appartement à vendre</a>
+            <span class="note">Montreuil 93100 · seloger · 2p · email only</span>
+            <span class="note">This property in the target area of Montreuil is listed at a very attractive price, 27.5% below the DVF median for the postal code based on a large number of sales. However, it falls short on your primary financial metric: the estimated gross yield is only 4.2% (based on your ref</span>
+            
+          </td>
+          <td class="num" data-value="180000">180 000 €</td>
+          <td class="num" data-value="40.7">40.7</td>
+          <td class="num" data-value="4422.6">
+            4 423
+            <span class="note">DVF 6 100 · n=3131</span>
+          </td>
+          <td class="num delta-down" data-value="-27.49">-27%</td>
+          <td class="num" data-value="4.21">4.2%</td>
+          <td><span class="tag">New</span></td>
+          <td data-value="2026-08-19T21:04:35+00:00">2026-08-19</td>
+        </tr>
+      
+        <tr data-status="New" data-score="60"
+            data-profile="default" data-search="appartement à vendre - première occupation montreuil 93100 seloger 93100 default">
+          <td>
+            <span class="score mid">60</span>
+            
+          </td>
+          
+          <td class="title">
+            <a href="https://click.by.seloger.com?qs=ABB7InYiOjEsImQiOjQ5NzN9ADMAAAAAALqUliWY4dtWH6t6eGtU8NEssP38ttg2D2jHkGF0-g2tgVHmbKU98QDPbtQDYs_JlfJpp8AWzzf3E-o9t1ksZn6-4eU0tLjchbatBIPi24-Peyib" target="_blank" rel="noopener noreferrer">Appartement à vendre - Première occupation</a>
+            <span class="note">Montreuil 93100 · seloger · 2p · email only</span>
+            <span class="note">This property is a marginal fit. While it is located in the target area of Montreuil and is priced very attractively at nearly 20% below the robust DVF median, its investment potential is severely limited by a poor return. Based on the reference rent for the area, the estimated g</span>
+            
+          </td>
+          <td class="num" data-value="195000">195 000 €</td>
+          <td class="num" data-value="39.8">39.8</td>
+          <td class="num" data-value="4899.5">
+            4 900
+            <span class="note">DVF 6 100 · n=3131</span>
+          </td>
+          <td class="num delta-down" data-value="-19.67">-20%</td>
+          <td class="num" data-value="3.8">3.8%</td>
+          <td><span class="tag">New</span></td>
+          <td data-value="2026-08-19T21:04:35+00:00">2026-08-19</td>
+        </tr>
+      
+        <tr data-status="New" data-score="52"
+            data-profile="default" data-search="appartement à vendre montreuil 93100 seloger 93100 default">
+          <td>
+            <span class="score mid">52</span>
+            
+          </td>
+          
+          <td class="title">
+            <a href="https://click.by.seloger.com?qs=ABB7InYiOjEsImQiOjQ5NzN9ADMAAAAAALqUliWAHzmC5I_UOfgjHrDIO34-9ZR4FrDM5ILTCeeUwliI1lbKu71PiSx4z0TfrXVZK32eRkdHdWcGJm62ozuf_Vm8OyM0E82aR_OJBQhnigi7" target="_blank" rel="noopener noreferrer">Appartement à vendre</a>
+            <span class="note">Montreuil 93100 · seloger · 2p · email only</span>
+            <span class="note">This property in the target area of Montreuil is a marginal fit. While its size, room count, and budget are suitable, and its asking price is only 1.6% above the robust DVF median for the 93100 postal code, its investment potential is poor. Using your own reference rent of 15.5 €</span>
+            
+          </td>
+          <td class="num" data-value="155000">155 000 €</td>
+          <td class="num" data-value="25.0">25</td>
+          <td class="num" data-value="6200.0">
+            6 200
+            <span class="note">DVF 6 100 · n=3131</span>
+          </td>
+          <td class="num delta-up" data-value="1.64">+2%</td>
+          <td class="num" data-value="3.0">3.0%</td>
+          <td><span class="tag">New</span></td>
+          <td data-value="2026-08-19T21:04:35+00:00">2026-08-19</td>
+        </tr>
+      
+      </tbody>
+    </table>
+  </div>
+  
+
+  <footer>
+    One row per listing per profile: a flat matching two searches is judged
+    once for each. Status is edited in Notion; this page is regenerated from the
+    pipeline's database on every run. Market comparisons use DVF (Demandes de Valeurs
+    Foncières), the French public register of recorded sale prices.
+  </footer>
+</div>
+
+<script>
+(function () {
+  const table = document.getElementById('listings');
+  if (!table) return;
+  const tbody = table.tBodies[0];
+  const rows = Array.from(tbody.rows);
+  const q = document.getElementById('q');
+  const minScore = document.getElementById('minScore');
+  const statusFilter = document.getElementById('statusFilter');
+  const profileFilter = document.getElementById('profileFilter');
+
+  function applyFilters() {
+    const needle = q.value.trim().toLowerCase();
+    const floor = Number(minScore.value);
+    const status = statusFilter.value;
+    const profile = profileFilter ? profileFilter.value : '';
+    for (const row of rows) {
+      const okScore = Number(row.dataset.score) >= floor;
+      const okStatus = !status || row.dataset.status === status;
+      const okProfile = !profile || row.dataset.profile === profile;
+      const okText = !needle || row.dataset.search.includes(needle);
+      row.hidden = !(okScore && okStatus && okProfile && okText);
+    }
+  }
+
+  function cellValue(row, index) {
+    const cell = row.cells[index];
+    const raw = cell.dataset.value;
+    return raw !== undefined ? raw : cell.textContent.trim();
+  }
+
+  table.tHead.addEventListener('click', (event) => {
+    const th = event.target.closest('th');
+    if (!th) return;
+    const index = Array.from(th.parentNode.children).indexOf(th);
+    const numeric = th.dataset.sort === 'num';
+    const descending = th.getAttribute('aria-sort') !== 'descending';
+
+    for (const other of th.parentNode.children) other.removeAttribute('aria-sort');
+    th.setAttribute('aria-sort', descending ? 'descending' : 'ascending');
+
+    rows.sort((a, b) => {
+      const av = cellValue(a, index), bv = cellValue(b, index);
+      const cmp = numeric
+        ? (Number(av) || 0) - (Number(bv) || 0)
+        : String(av).localeCompare(String(bv));
+      return descending ? -cmp : cmp;
+    });
+    for (const row of rows) tbody.appendChild(row);
+  });
+
+  q.addEventListener('input', applyFilters);
+  minScore.addEventListener('change', applyFilters);
+  statusFilter.addEventListener('change', applyFilters);
+  if (profileFilter) profileFilter.addEventListener('change', applyFilters);
+  applyFilters();
+})();
+</script>
+</body>
+</html>
