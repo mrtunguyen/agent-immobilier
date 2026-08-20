@@ -4,7 +4,7 @@ Watches French property sites for buy-to-let opportunities and tells you which
 ones are actually worth your time.
 
 You set up saved-search email alerts on leboncoin, SeLoger, PAP, Bien'ici and
-LogicImmo, pointed at a dedicated Gmail address. Once a day this
+LogicImmo, pointed at a dedicated Gmail address. Every eight hours this
 pipeline reads the new alerts, extracts the listings, throws away the ones it
 has already seen, checks each asking price against **what comparable properties
 in that postal code actually sold for**, has Gemini score it against your
