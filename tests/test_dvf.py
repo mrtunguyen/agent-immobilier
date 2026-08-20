@@ -6,7 +6,12 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from scout.dvf import CACHE_MAX_AGE_DAYS, _cache_is_fresh, _mutation_price_per_sqm
+from scout.dvf import (
+    CACHE_MAX_AGE_DAYS,
+    MarketStats,
+    _cache_is_fresh,
+    _mutation_price_per_sqm,
+)
 
 TYPES = {"Appartement", "Maison"}
 
@@ -107,3 +112,40 @@ def test_stale_cache_is_refetched():
 def test_missing_or_malformed_timestamp_is_not_fresh():
     assert _cache_is_fresh(None) is False
     assert _cache_is_fresh("not a date") is False
+
+
+# ------------------------------------------------- sample-size confidence
+
+
+def stats(sample_size: int, min_comparable: int, median=4100.0, **kw):
+    return MarketStats("93100", median, 4200.0, sample_size, "dvf",
+                       min_comparable, kw.get("fallback"))
+
+
+def test_a_sample_at_or_above_the_threshold_is_confident():
+    assert stats(5, 5).is_confident is True
+    assert stats(3131, 5).is_confident is True
+
+
+def test_a_thin_sample_is_not_confident_but_keeps_its_median():
+    """Three real sales are still data — flagged, not discarded."""
+    thin = stats(3, 5)
+    assert thin.is_confident is False
+    assert thin.median_per_sqm == 4100.0
+    assert thin.sample_size == 3
+
+
+def test_a_missing_median_is_never_confident():
+    assert MarketStats("93100", None, None, 0, "unavailable", 5).is_confident is False
+
+
+def test_one_sale_still_counts_when_no_threshold_is_configured():
+    """min_comparable_transactions: 0 disables the check, not the data."""
+    assert stats(1, 0).is_confident is True
+    assert stats(0, 0).is_confident is False
+
+
+def test_the_criteria_fallback_is_never_treated_as_confident():
+    """A hand-typed estimate is not a sample of recorded sales."""
+    guess = MarketStats("93100", 5500.0, None, 0, "criteria_fallback", 5)
+    assert guess.is_confident is False

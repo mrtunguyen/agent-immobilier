@@ -59,10 +59,22 @@ class MarketStats:
     mean_per_sqm: float | None
     sample_size: int
     source: str  # "dvf", "dvf_cache", "criteria_fallback", or "unavailable"
+    # The `dvf.min_comparable_transactions` this sample was judged against, and
+    # the investor's own €/m² estimate for the area when they supplied one.
+    min_comparable: int = 0
+    fallback_per_sqm: float | None = None
 
     @property
     def is_confident(self) -> bool:
-        return self.median_per_sqm is not None and self.sample_size > 0
+        """True when there are enough real sales to argue from.
+
+        Three recorded sales are not nothing, but they are not a market either:
+        one unusual flat moves the median. Below the threshold the figure is
+        still reported — flagged as weak evidence rather than discarded.
+        """
+        if self.median_per_sqm is None:
+            return False
+        return self.sample_size >= max(1, self.min_comparable)
 
 
 def insee_code_for_postal_code(postal_code: str, client: httpx.Client) -> str | None:
@@ -181,6 +193,10 @@ def market_stats(
     if not postal_code:
         return MarketStats("", None, None, 0, "unavailable")
 
+    min_comparable = criteria.dvf_min_comparable_transactions
+    city = criteria.city_for_postal_code(postal_code)
+    own_estimate = float(city.avg_price_per_sqm_eur) if city and city.avg_price_per_sqm_eur else None
+
     cached = store.get_dvf(postal_code)
     if cached and _cache_is_fresh(cached["fetched_at"]):
         return MarketStats(
@@ -189,6 +205,8 @@ def market_stats(
             cached["mean_per_sqm"],
             cached["sample_size"],
             "dvf_cache",
+            min_comparable,
+            own_estimate,
         )
 
     owns_client = client is None
@@ -222,24 +240,29 @@ def market_stats(
             round(sum(prices) / len(prices), 1),
             len(prices),
             "dvf",
+            min_comparable,
+            own_estimate,
         )
         store.put_dvf(
             postal_code, stats.median_per_sqm, stats.mean_per_sqm, stats.sample_size
         )
         log.info(
-            "DVF %s: median %.0f €/m² from %d sales",
+            "DVF %s: median %.0f €/m² from %d sales%s",
             postal_code,
             stats.median_per_sqm,
             stats.sample_size,
+            ""
+            if stats.is_confident
+            else f" — below min_comparable_transactions={min_comparable}, "
+            "treated as weak evidence",
         )
         return stats
 
     # Nothing usable from DVF — fall back to the user's own estimate if given.
-    city = criteria.city_for_postal_code(postal_code)
-    if city and city.avg_price_per_sqm_eur:
+    if own_estimate:
         return MarketStats(
-            postal_code, float(city.avg_price_per_sqm_eur), None, 0, "criteria_fallback"
+            postal_code, own_estimate, None, 0, "criteria_fallback", min_comparable
         )
 
     store.put_dvf(postal_code, None, None, 0)
-    return MarketStats(postal_code, None, None, 0, "unavailable")
+    return MarketStats(postal_code, None, None, 0, "unavailable", min_comparable)

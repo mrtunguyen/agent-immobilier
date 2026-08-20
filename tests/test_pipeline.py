@@ -152,3 +152,29 @@ def test_dashboard_escapes_listing_titles(tmp_path):
     html = out.read_text(encoding="utf-8")
     assert "<script>alert(1)</script>" not in html
     assert "&lt;script&gt;" in html
+
+
+def test_dashboard_flags_a_thin_dvf_sample(tmp_path):
+    """A median from 3 sales must not look as solid as one from 3,000."""
+    cset = load_criteria_set(_write(tmp_path, FIXTURE_YAML + "\ndvf:\n  min_comparable_transactions: 5\n"))
+    with Store(tmp_path / "db.sqlite3") as store:
+        thin = store.insert(Listing(site="x", external_id="1", url="https://x/1",
+                                    price_eur=200_000, surface_m2=50.0))
+        solid = store.insert(Listing(site="x", external_id="2", url="https://x/2",
+                                     price_eur=210_000, surface_m2=50.0))
+        store.save_analysis(thin, {"score": 80, "dvf_median_per_sqm": 4100.0,
+                                   "dvf_sample_size": 3})
+        store.save_analysis(solid, {"score": 79, "dvf_median_per_sqm": 4100.0,
+                                    "dvf_sample_size": 3131})
+        out = render(store, tmp_path / "index.html", criteria_set=cset)
+
+    html = out.read_text(encoding="utf-8")
+    assert "n=3 ⚠" in html
+    assert "n=3131 ⚠" not in html
+    assert "note thin" in html
+
+
+def _write(tmp_path, text: str):
+    path = tmp_path / "criteria.yaml"
+    path.write_text(text, encoding="utf-8")
+    return path

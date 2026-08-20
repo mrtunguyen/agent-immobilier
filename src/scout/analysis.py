@@ -169,6 +169,20 @@ def _listing_context(
         )
         if market.mean_per_sqm:
             parts.append(f"Mean: {market.mean_per_sqm:,.0f} €/m².")
+        if not market.is_confident:
+            parts.append(
+                f"WARNING: {market.sample_size} sale(s) is below the "
+                f"{market.min_comparable} the investor considers a reliable "
+                f"sample, so one unusual property could be moving this median. "
+                f"Treat the price comparison as weak evidence, say so in your "
+                f"analysis, and do not let it dominate the score."
+            )
+            if market.fallback_per_sqm:
+                parts.append(
+                    f"For cross-checking, the investor's own estimate for this "
+                    f"area is {market.fallback_per_sqm:,.0f} €/m². Where the two "
+                    f"disagree, say which way and why it matters."
+                )
     elif market.median_per_sqm:
         parts.append(
             f"No DVF data available; the investor's own estimate for this area "

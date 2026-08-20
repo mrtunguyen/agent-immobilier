@@ -44,6 +44,7 @@ def _row_view(
     thresholds: dict[str, int],
     labels: dict[str, str],
     default_threshold: int,
+    min_comparable: int = 0,
 ) -> dict:
     location = " ".join(p for p in (row["city"], row["postal_code"]) if p) or "—"
     title = (row["title"] or row["url"] or "Listing").strip()
@@ -88,6 +89,11 @@ def _row_view(
         "dvf_median": row["dvf_median_per_sqm"],
         "dvf_median_fmt": _fmt_int(row["dvf_median_per_sqm"]),
         "dvf_sample": row["dvf_sample_size"],
+        # Too few recorded sales to argue from: the median is shown, flagged.
+        "dvf_thin": bool(
+            row["dvf_median_per_sqm"]
+            and (row["dvf_sample_size"] or 0) < min_comparable
+        ),
         "price_vs_dvf_pct": delta,
         "delta_fmt": delta_fmt,
         "delta_class": delta_class,
@@ -128,13 +134,15 @@ def render(
         thresholds = {p.name: p.score_threshold_notify for p in known}
         labels = {p.name: p.display_name for p in known}
         default_threshold = criteria_set.base.score_threshold_notify
+        min_comparable = criteria_set.base.dvf_min_comparable_transactions
     else:
         thresholds = {DEFAULT_PROFILE_NAME: threshold}
         labels = {}
         default_threshold = threshold
+        min_comparable = 0
 
     rows = [
-        _row_view(row, thresholds, labels, default_threshold)
+        _row_view(row, thresholds, labels, default_threshold, min_comparable)
         for row in store.all_listings()
     ]
     runs = store.last_runs(limit=1)

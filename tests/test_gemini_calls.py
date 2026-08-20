@@ -200,3 +200,47 @@ def test_response_schemas_convert_for_gemini(model):
     schema = genai_transformers.t_schema(None, model)
     assert schema is not None
     assert schema.model_dump(exclude_none=True)["properties"]
+
+
+# ------------------------------------------- what the prompt says about DVF
+
+
+def thin_market(fallback=None):
+    """Three recorded sales against a threshold of five."""
+    return MarketStats("93100", 4100.0, 4200.0, 3, "dvf", 5, fallback)
+
+
+def test_a_confident_sample_is_stated_without_hedging(criteria):
+    client = FakeClient(ListingAnalysis(score=70, analysis="."))
+    analysis_mod.analyse(client, listing(), market(), None, criteria)
+
+    contents = client.models.calls[0]["contents"]
+    assert "median 4,100 €/m² across 42 comparable transactions" in contents
+    assert "WARNING" not in contents
+
+
+def test_a_thin_sample_is_flagged_as_weak_evidence(criteria):
+    client = FakeClient(ListingAnalysis(score=70, analysis="."))
+    analysis_mod.analyse(client, listing(), thin_market(), None, criteria)
+
+    contents = client.models.calls[0]["contents"]
+    # The median is still supplied — it is evidence, just not strong evidence.
+    assert "median 4,100 €/m² across 3 comparable transactions" in contents
+    assert "3 sale(s) is below the 5" in contents
+    assert "weak evidence" in contents
+    assert "do not let it dominate the score" in contents
+
+
+def test_a_thin_sample_offers_the_investors_own_estimate_for_cross_checking(criteria):
+    client = FakeClient(ListingAnalysis(score=70, analysis="."))
+    analysis_mod.analyse(client, listing(), thin_market(fallback=5500.0), None, criteria)
+
+    contents = client.models.calls[0]["contents"]
+    assert "investor's own estimate for this area is 5,500 €/m²" in contents
+
+
+def test_no_own_estimate_means_no_cross_check_line(criteria):
+    client = FakeClient(ListingAnalysis(score=70, analysis="."))
+    analysis_mod.analyse(client, listing(), thin_market(), None, criteria)
+
+    assert "cross-check" not in client.models.calls[0]["contents"].lower()

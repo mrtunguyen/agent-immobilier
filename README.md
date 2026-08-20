@@ -281,7 +281,7 @@ stay unread, but the listings are stored and therefore *known*, so a later real
 run skips them. Use `--deliver-pending` to send anything a dry run analysed.
 
 ```bash
-python -m pytest               # 121 tests, no network, no API key needed
+python -m pytest               # 131 tests, no network, no API key needed
 ```
 
 ## Cost
@@ -331,6 +331,14 @@ bypassing DataDome is a fight not worth having for a personal tool.
 **No DVF data for an area.** Very recent or very rural transactions may be
 missing. The listing is still scored, the analysis flags the comparison as
 unavailable, and you can set `avg_price_per_sqm_eur` for that city as a fallback.
+
+**Too few DVF sales to argue from.** A median over three sales is not a market:
+one unusual property moves it. `dvf.min_comparable_transactions` (default 5) is
+the line — below it the median is still supplied to the model, but labelled weak
+evidence with an instruction not to let it dominate the score, your own
+`avg_price_per_sqm_eur` is offered alongside as a cross-check when you've set
+one, and the dashboard marks the sample `n=3 ⚠`. Raise the threshold to be
+stricter about what counts as a real comparison.
 
 **The run fails.** Any unhandled exception sends you a Telegram message and the
 error is recorded in the `runs` table, so a broken pipeline doesn't fail
