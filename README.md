@@ -4,7 +4,7 @@ Watches French property sites for buy-to-let opportunities and tells you which
 ones are actually worth your time.
 
 You set up saved-search email alerts on leboncoin, SeLoger, PAP, Bien'ici and
-LogicImmo, pointed at a dedicated Gmail address. Every couple of hours this
+LogicImmo, pointed at a dedicated Gmail address. Every few hours this
 pipeline reads the new alerts, extracts the listings, throws away the ones it
 has already seen, checks each asking price against **what comparable properties
 in that postal code actually sold for**, has Gemini score it against your
@@ -281,7 +281,7 @@ stay unread, but the listings are stored and therefore *known*, so a later real
 run skips them. Use `--deliver-pending` to send anything a dry run analysed.
 
 ```bash
-python -m pytest               # 114 tests, no network, no API key needed
+python -m pytest               # 121 tests, no network, no API key needed
 ```
 
 ## Cost
@@ -310,6 +310,19 @@ costs two analysis calls.
 Gemini Flash takes over automatically. You'll see `provenance = llm_fallback` in
 the database — that's the signal to update the parser in
 `src/scout/parsers/`, using a saved copy of the new email as a fixture.
+
+SeLoger is the worked example. It now routes *every* link — listings, header,
+footer, unsubscribe — through `click.by.seloger.com?qs=<token>`, so the URL no
+longer says what it points at and the old path-matching pattern selected nothing.
+The parser instead anchors on the per-listing call to action ("Voir l'annonce")
+via `anchor_text_pattern`; `tests/fixtures/seloger_tracker_*.html` pin both that
+template and the older direct-link one.
+
+Two consequences worth knowing. The tracking token is minted per send, so the
+same property in two alerts has two URLs and two listing keys — dedup falls to
+the fuzzy key (postal code + surface + rooms + price). And that template embeds
+no thumbnails: every slot reuses one placeholder, which the parser drops rather
+than passing a stock image to Telegram as the listing photo.
 
 **A listing shows "email only".** The site blocked the page fetch. Expected, and
 the analysis says which details it therefore couldn't check. Not worth fixing —

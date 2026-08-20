@@ -206,3 +206,79 @@ def test_fuzzy_key_ignores_price():
 def test_fuzzy_key_needs_surface_and_postal_code():
     assert fuzzy_key(Listing(price_eur=200_000, surface_m2=50)) is None
     assert fuzzy_key(Listing(price_eur=200_000, postal_code="69003")) is None
+
+
+# --------------------------------------------- seloger's tracking-link template
+
+
+def test_seloger_tracker_digest_extracts_every_listing():
+    """The current template routes all 46 links through one tracking host."""
+    listings = seloger.parse(read_fixture("seloger_tracker_digest.html"))
+
+    assert len(listings) == 5
+    assert [l.price_eur for l in listings] == [155_000, 160_000, 169_000, 180_000, 195_000]
+    assert [l.surface_m2 for l in listings] == [25.0, 48.9, 29.0, 40.7, 39.8]
+    assert {l.rooms for l in listings} == {2}
+    assert {l.city for l in listings} == {"Montreuil"}
+    assert {l.postal_code for l in listings} == {"93100"}
+    assert all(l.is_usable() for l in listings)
+
+
+def test_seloger_tracker_titles_are_the_property_type_not_the_call_to_action():
+    listings = seloger.parse(read_fixture("seloger_tracker_digest.html"))
+    titles = [l.title for l in listings]
+
+    assert "Duplex à vendre" in titles
+    assert "Appartement à vendre - Première occupation" in titles
+    assert not any("Voir l" in (t or "") for t in titles)
+
+
+def test_seloger_tracker_carries_no_photo_rather_than_a_placeholder():
+    """This template embeds no thumbnails at all.
+
+    Every listing slot reuses one 270x200 placeholder from the email's own asset
+    library. Sending that to Telegram as the listing photo would be worse than
+    sending none, so both the shared-image and template-asset rules reject it.
+    """
+    listings = seloger.parse(read_fixture("seloger_tracker_digest.html"))
+    assert [l.photo_url for l in listings] == [None] * 5
+
+    single = seloger.parse(read_fixture("seloger_tracker_single.html"))
+    assert single[0].photo_url is None
+
+
+def test_seloger_tracker_ignores_the_search_criteria_summary():
+    """The header repeats the search as "jusqu'à 200 000 €" and "2-3 pièces"."""
+    listings = seloger.parse(read_fixture("seloger_tracker_digest.html"))
+
+    assert 200_000 not in [l.price_eur for l in listings]
+
+
+def test_seloger_tracker_single_listing_email():
+    listings = seloger.parse(read_fixture("seloger_tracker_single.html"))
+
+    assert len(listings) == 1
+    listing = listings[0]
+    assert listing.price_eur == 160_000
+    assert listing.surface_m2 == 56.0
+    assert listing.rooms == 3
+    # No comma before the postal code in this template.
+    assert listing.city == "Rosny-sous-Bois"
+    assert listing.postal_code == "93110"
+
+
+def test_seloger_tracker_urls_are_distinct_per_listing():
+    """Dedup keys off the URL, so two listings must never share one."""
+    listings = seloger.parse(read_fixture("seloger_tracker_digest.html"))
+    urls = [l.url for l in listings]
+
+    assert len(set(urls)) == len(urls)
+    assert all("click.by.seloger.com" in u for u in urls)
+
+
+def test_seloger_still_parses_the_older_direct_link_template():
+    """The fallback path: no call to action, links straight to the listing."""
+    listings = seloger.parse(read_fixture("seloger_alert.html"))
+
+    assert len(listings) == 2
+    assert all("seloger.com" in l.url for l in listings)
