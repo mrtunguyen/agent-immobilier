@@ -2,11 +2,14 @@ name: rental-scout
 
 on:
   schedule:
-    # Every 4 hours. Alert emails arrive throughout the day and running often is
-    # what makes the Telegram push useful, but this is a private repo: Actions
-    # minutes are metered against the free 2,000/month, and 2-hourly runs eat
-    # roughly 1,100 of them. Every 4 hours halves that with headroom to spare.
-    - cron: "0 */4 * * *"
+    # Once a day, 06:17 UTC (08:17 in France in summer, 07:17 in winter): the
+    # overnight alerts are processed before you start the day. Off the hour on
+    # purpose — scheduled runs queue behind everyone else's on the hour.
+    #
+    # The trade-off is latency: a listing can now sit up to 24 hours before you
+    # hear about it. Gemini cost is unaffected (it scales with new listings, not
+    # with runs); this only cuts metered Actions minutes, to ~90/month.
+    - cron: "17 6 * * *"
   workflow_dispatch: {}
 
 # The run commits data/ back to the repo, so two runs must never overlap.
