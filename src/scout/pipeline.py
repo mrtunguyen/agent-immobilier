@@ -14,6 +14,7 @@ page fetch — happens once regardless, since neither depends on the profile.
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import sys
 from collections import Counter
@@ -22,7 +23,7 @@ from dataclasses import dataclass, field
 import httpx
 
 from . import analysis as analysis_mod
-from . import dashboard, dvf, enrich, parsers
+from . import configure_stdio, dashboard, dvf, enrich, parsers
 from .config import Criteria, CriteriaSet, Settings, load_criteria_set, load_settings
 from .dedupe import Store
 from .gmail_client import AlertEmail, GmailClient
@@ -118,6 +119,102 @@ def matching_profiles(listing: Listing, criteria_set: CriteriaSet) -> list[Crite
     a model call.
     """
     return [p for p in criteria_set if passes_hard_filters(listing, p)]
+
+
+def _verdict_from_row(row) -> dict:
+    """Rebuild the analysis dict from a stored row.
+
+    The delivery helpers take the verdict as a dict because that's what the
+    model call returns; replaying a stored verdict means reconstructing it.
+    """
+    try:
+        red_flags = json.loads(row["red_flags"] or "[]")
+    except (json.JSONDecodeError, TypeError):
+        red_flags = []
+    return {
+        "price_per_sqm": row["price_per_sqm"],
+        "dvf_median_per_sqm": row["dvf_median_per_sqm"],
+        "dvf_sample_size": row["dvf_sample_size"],
+        "price_vs_dvf_pct": row["price_vs_dvf_pct"],
+        "estimated_monthly_rent": row["estimated_monthly_rent"],
+        "gross_yield_pct": row["gross_yield_pct"],
+        "tension_locative": row["tension_locative"],
+        "dpe": row["dpe"],
+        "red_flags": red_flags,
+        "score": row["score"],
+        "analysis": row["analysis"],
+        "enrichment_source": row["enrichment_source"],
+    }
+
+
+def deliver_pending(
+    settings: Settings,
+    criteria_set: CriteriaSet,
+    store: Store,
+    *,
+    dry_run: bool = False,
+) -> RunStats:
+    """Send stored verdicts that were never delivered, without re-analysing.
+
+    A verdict produced under --dry-run is stored but deliberately not sent, and
+    the listing is then known — so the normal run will never look at it again.
+    This replays those verdicts from the database: Telegram for anything at or
+    above its profile's threshold and not yet notified, Notion for any row
+    without a page id. Both are idempotent, so running it twice sends nothing
+    twice.
+    """
+    stats = RunStats()
+    named = len(criteria_set.all_profiles) > 1
+    thresholds = {
+        p.name: p.score_threshold_notify for p in criteria_set.all_profiles
+    }
+    labels = {p.name: p.display_name for p in criteria_set.all_profiles}
+    default_threshold = criteria_set.base.score_threshold_notify
+
+    notifier = (
+        TelegramNotifier(settings.telegram_bot_token, settings.telegram_chat_id)
+        if settings.telegram_enabled
+        else None
+    )
+    notion = None
+    if settings.notion_enabled:
+        from .sync_notion import NotionSync
+
+        notion = NotionSync(settings.notion_token, settings.notion_database_id)
+
+    if notifier is None and notion is None:
+        log.warning("neither Telegram nor Notion is configured — nothing to deliver")
+        return stats
+
+    rows = [r for r in store.all_listings(limit=10_000) if r["score"] is not None]
+    log.info("%d analysed verdict(s) in the database", len(rows))
+
+    for row in rows:
+        key, profile = row["key"], row["profile"]
+        verdict = _verdict_from_row(row)
+        threshold = thresholds.get(profile, default_threshold)
+
+        if (
+            notifier
+            and not row["notified"]
+            and row["score"] >= threshold
+            and not dry_run
+        ):
+            label = labels.get(profile, profile) if named else None
+            if notifier.send_listing(row, verdict, profile=label):
+                store.mark_notified(key, profile)
+                stats.notified += 1
+                log.info("notified %s [%s] score=%s", key, profile, row["score"])
+
+        if notion and not row["notion_page_id"] and not dry_run:
+            page_id = notion.upsert(row, verdict, profile=profile)
+            if page_id:
+                store.set_notion_page_id(key, page_id, profile)
+                stats.synced += 1
+                log.info("synced %s [%s] to Notion", key, profile)
+
+    dashboard.render(store, criteria_set=criteria_set)
+    return stats
 
 
 def run(
@@ -257,6 +354,7 @@ def run(
 
 
 def main(argv: list[str] | None = None) -> int:
+    configure_stdio()
     parser = argparse.ArgumentParser(prog="scout", description=__doc__)
     parser.add_argument(
         "--dry-run",
@@ -273,6 +371,14 @@ def main(argv: list[str] | None = None) -> int:
         help=(
             "Run only this profile from criteria.yaml. Repeatable; "
             "default is every enabled profile."
+        ),
+    )
+    parser.add_argument(
+        "--deliver-pending",
+        action="store_true",
+        help=(
+            "Send stored verdicts that were never delivered (anything analysed "
+            "under --dry-run), then exit. Re-analyses nothing; idempotent."
         ),
     )
     parser.add_argument(
@@ -304,6 +410,17 @@ def main(argv: list[str] | None = None) -> int:
     with Store() as store:
         if args.dashboard_only:
             dashboard.render(store, criteria_set=criteria_set)
+            return 0
+
+        if args.deliver_pending:
+            stats = deliver_pending(
+                settings, criteria_set, store, dry_run=args.dry_run
+            )
+            log.info(
+                "delivered — %d notified, %d synced to Notion",
+                stats.notified,
+                stats.synced,
+            )
             return 0
 
         try:

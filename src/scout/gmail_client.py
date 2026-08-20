@@ -159,9 +159,11 @@ class GmailClient:
 if __name__ == "__main__":  # setup check: python -m scout.gmail_client
     import sys
 
+    from . import configure_stdio
     from .config import load_settings
     from .parsers import site_for_sender
 
+    configure_stdio()
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     settings = load_settings()
 

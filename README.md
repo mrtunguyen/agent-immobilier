@@ -159,6 +159,16 @@ and keep the token. Create a database with exactly these properties:
 Share the database with your integration (••• → Connections). The database id is
 the 32-character string in its URL.
 
+Names are matched ignoring case and surrounding whitespace, so a column you
+accidentally created as `Profile ` still works. A column that is genuinely
+missing is skipped with a log line rather than failing the row — except `Name`
+and `Listing Key`, without which a row can't be created or found again.
+
+Under Notion API 2025-09-03 a database contains one or more *data sources*, and
+the properties live on the data source. The pipeline resolves that from your
+database id automatically, once per run; you still put the database id in
+`.env`. This needs `notion-client` 3.x.
+
 `Status` is yours: the pipeline sets it to `New` when it first creates a row and
 never touches it again, so your triage survives re-runs.
 
@@ -252,17 +262,26 @@ python -m scout                # the real thing
 python -m scout --dashboard-only   # re-render the page from existing data
 
 python -m scout --profile studio-cashflow   # one profile only; repeatable
+python -m scout --deliver-pending           # send stored-but-undelivered verdicts
 ```
+
+`--deliver-pending` exists because `--dry-run` stores verdicts without sending
+them, and the listing is then *known* — so a later run will never look at it
+again and those listings would never reach Telegram or Notion. This replays
+them from the database, re-analysing nothing. It is idempotent: it only touches
+rows that were never notified or never synced.
 
 `python -m scout.config` prints every active profile with its thresholds — the
 quickest way to check a `profiles:` block does what you meant.
 
 `--dry-run` is the one to use first: it ingests, analyses and stores, but sends
 no Telegram message, writes nothing to Notion, and leaves the emails unread so
-you can run it again against the same messages.
+you can run it again against the same messages. Note the asymmetry: the emails
+stay unread, but the listings are stored and therefore *known*, so a later real
+run skips them. Use `--deliver-pending` to send anything a dry run analysed.
 
 ```bash
-python -m pytest               # 104 tests, no network, no API key needed
+python -m pytest               # 114 tests, no network, no API key needed
 ```
 
 ## Cost

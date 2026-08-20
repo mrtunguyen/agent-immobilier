@@ -8,6 +8,11 @@ keeps that value even if the same listing reappears in a later alert.
 With several profiles active a listing gets one row per profile it matched, so
 you triage "worth a visit for the cashflow search" independently of the same
 flat under a different set of thresholds.
+
+Written against Notion API 2025-09-03 (notion-client 3.x), where a database
+holds one or more *data sources* and the properties live on the data source, not
+the database. The id in your .env is the database id, so the data source is
+resolved from it once per run and cached.
 """
 
 from __future__ import annotations
@@ -19,7 +24,9 @@ from .config import DEFAULT_PROFILE_NAME
 log = logging.getLogger(__name__)
 
 # Property names expected on the Notion database. Create them with these exact
-# names and types (see README) — Notion matches by name, not position.
+# names and types (see README) — Notion matches by name, not position. Matching
+# ignores case and surrounding whitespace, because a column named "Profile "
+# looks identical to "Profile" in the UI and is easy to create by accident.
 PROP_NAME = "Name"
 PROP_KEY = "Listing Key"
 PROP_PROFILE = "Profile"
@@ -32,10 +39,17 @@ PROP_URL = "URL"
 PROP_STATUS = "Status"
 PROP_ANALYSIS = "Analysis"
 
+# Without these two a row cannot be created or found again.
+REQUIRED_PROPS = (PROP_NAME, PROP_KEY)
+
 
 def _truncate(text: str | None, limit: int = 1900) -> str:
     """Notion caps a rich-text field at 2000 characters."""
     return (text or "")[:limit]
+
+
+def _normalise(name: str) -> str:
+    return name.strip().casefold()
 
 
 class NotionSync:
@@ -44,19 +58,88 @@ class NotionSync:
 
         self.client = Client(auth=token)
         self.database_id = database_id
+        self._data_source_id: str | None = None
+        # normalised property name -> the exact name Notion knows it by
+        self._names: dict[str, str] | None = None
+
+    # ------------------------------------------------------------ the schema
+
+    def _resolve(self) -> bool:
+        """Find the data source and map its property names. True if usable."""
+        if self._names is not None:
+            return bool(self._data_source_id)
+
+        self._names = {}
+        try:
+            database = self.client.databases.retrieve(database_id=self.database_id)
+            sources = database.get("data_sources") or []
+            if not sources:
+                log.warning("Notion database %s has no data source", self.database_id)
+                return False
+            # A database created through the UI has exactly one.
+            self._data_source_id = sources[0]["id"]
+            schema = self.client.data_sources.retrieve(
+                data_source_id=self._data_source_id
+            )
+            self._names = {
+                _normalise(name): name for name in (schema.get("properties") or {})
+            }
+        except Exception:
+            log.warning("Notion schema lookup failed", exc_info=True)
+            self._data_source_id = None
+            return False
+
+        missing = [p for p in REQUIRED_PROPS if not self._prop(p)]
+        if missing:
+            log.warning(
+                "Notion database is missing required propert(ies) %s — add them and "
+                "re-run; found: %s",
+                ", ".join(repr(m) for m in missing),
+                ", ".join(sorted(self._names.values())) or "none",
+            )
+            self._data_source_id = None
+            return False
+
+        optional = [
+            p
+            for p in (
+                PROP_PROFILE, PROP_SCORE, PROP_PRICE, PROP_SURFACE, PROP_YIELD,
+                PROP_CITY, PROP_URL, PROP_STATUS, PROP_ANALYSIS,
+            )
+            if not self._prop(p)
+        ]
+        if optional:
+            log.info(
+                "Notion database has no %s column(s); those fields won't be written",
+                ", ".join(optional),
+            )
+        return True
+
+    def _prop(self, wanted: str) -> str | None:
+        """The name Notion actually uses for a property, or None if absent."""
+        return (self._names or {}).get(_normalise(wanted))
+
+    # -------------------------------------------------------------- the rows
 
     def _find_page(self, key: str, profile: str) -> str | None:
-        """Locate an existing row. A listing has one row per profile, so the
-        profile is part of the identity, not just a displayed field."""
+        """Locate an existing row.
+
+        A listing has one row per profile, so the profile is part of the
+        identity, not just a displayed field. When the database has no Profile
+        column we can only match on the key.
+        """
+        key_prop = self._prop(PROP_KEY)
+        profile_prop = self._prop(PROP_PROFILE)
+        conditions = [{"property": key_prop, "rich_text": {"equals": key}}]
+        if profile_prop:
+            conditions.append(
+                {"property": profile_prop, "rich_text": {"equals": profile}}
+            )
+
         try:
-            result = self.client.databases.query(
-                database_id=self.database_id,
-                filter={
-                    "and": [
-                        {"property": PROP_KEY, "rich_text": {"equals": key}},
-                        {"property": PROP_PROFILE, "rich_text": {"equals": profile}},
-                    ]
-                },
+            result = self.client.data_sources.query(
+                data_source_id=self._data_source_id,
+                filter={"and": conditions} if len(conditions) > 1 else conditions[0],
                 page_size=1,
             )
         except Exception:
@@ -73,28 +156,35 @@ class NotionSync:
             p for p in (listing_row["city"], listing_row["postal_code"]) if p
         )
 
-        props: dict = {
-            PROP_NAME: {"title": [{"text": {"content": title}}]},
-            PROP_KEY: {"rich_text": [{"text": {"content": listing_row["key"]}}]},
-            PROP_PROFILE: {"rich_text": [{"text": {"content": profile}}]},
-            PROP_URL: {"url": listing_row["url"]},
-            PROP_CITY: {"rich_text": [{"text": {"content": location or "—"}}]},
-            PROP_ANALYSIS: {
-                "rich_text": [
-                    {"text": {"content": _truncate(analysis.get("analysis"))}}
-                ]
-            },
-        }
+        # (expected name, value) — entries whose column is absent are dropped, so
+        # a partially built database still gets everything it can hold.
+        candidates: list[tuple[str, dict]] = [
+            (PROP_NAME, {"title": [{"text": {"content": title}}]}),
+            (PROP_KEY, {"rich_text": [{"text": {"content": listing_row["key"]}}]}),
+            (PROP_PROFILE, {"rich_text": [{"text": {"content": profile}}]}),
+            (PROP_URL, {"url": listing_row["url"]}),
+            (PROP_CITY, {"rich_text": [{"text": {"content": location or "—"}}]}),
+            (
+                PROP_ANALYSIS,
+                {"rich_text": [{"text": {"content": _truncate(analysis.get("analysis"))}}]},
+            ),
+        ]
         if analysis.get("score") is not None:
-            props[PROP_SCORE] = {"number": analysis["score"]}
+            candidates.append((PROP_SCORE, {"number": analysis["score"]}))
         if listing_row["price_eur"] is not None:
-            props[PROP_PRICE] = {"number": listing_row["price_eur"]}
+            candidates.append((PROP_PRICE, {"number": listing_row["price_eur"]}))
         if listing_row["surface_m2"] is not None:
-            props[PROP_SURFACE] = {"number": listing_row["surface_m2"]}
+            candidates.append((PROP_SURFACE, {"number": listing_row["surface_m2"]}))
         if analysis.get("gross_yield_pct") is not None:
-            props[PROP_YIELD] = {"number": analysis["gross_yield_pct"]}
+            candidates.append((PROP_YIELD, {"number": analysis["gross_yield_pct"]}))
         if include_status:
-            props[PROP_STATUS] = {"select": {"name": "New"}}
+            candidates.append((PROP_STATUS, {"select": {"name": "New"}}))
+
+        props: dict = {}
+        for wanted, value in candidates:
+            actual = self._prop(wanted)
+            if actual:
+                props[actual] = value
         return props
 
     def upsert(
@@ -104,6 +194,9 @@ class NotionSync:
 
         Returns the Notion page id.
         """
+        if not self._resolve():
+            return None
+
         key = listing_row["key"]
         page_id = listing_row["notion_page_id"] or self._find_page(key, profile)
 
@@ -119,7 +212,10 @@ class NotionSync:
                 return page_id
 
             page = self.client.pages.create(
-                parent={"database_id": self.database_id},
+                parent={
+                    "type": "data_source_id",
+                    "data_source_id": self._data_source_id,
+                },
                 properties=self._properties(
                     listing_row, analysis, include_status=True, profile=profile
                 ),

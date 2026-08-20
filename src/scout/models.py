@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import sys
 
+from . import configure_stdio
 from .config import load_criteria_set, load_settings
 
 # Anything that can't score a listing or parse an email is noise here.
@@ -28,6 +29,7 @@ def usable_models(client) -> list[str]:
 
 
 def main() -> int:
+    configure_stdio()
     settings = load_settings()
     if not settings.gemini_api_key:
         print("GEMINI_API_KEY not set — check .env")

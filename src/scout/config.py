@@ -332,6 +332,9 @@ def load_criteria(path: Path | None = None) -> Criteria:
 
 
 if __name__ == "__main__":  # smoke check: python -m scout.config
+    from . import configure_stdio
+
+    configure_stdio()
     settings = load_settings()
     criteria_set = load_criteria_set()
     print(f"criteria.yaml OK — {len(criteria_set)} active profile(s)")
