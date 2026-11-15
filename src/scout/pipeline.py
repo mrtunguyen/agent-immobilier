@@ -81,7 +81,8 @@ def extract_listings(
         for listing in parsed.listings:
             listing.provenance = parsed.provenance
         log.info(
-            "%s -> %d listing(s) via %s",
+            "[%s] %s -> %d listing(s) via %s",
+            parsed.site,
             message.subject[:60] or message.sender,
             len(parsed.listings),
             parsed.provenance,
@@ -254,21 +255,35 @@ def run(
     stats.listings_found = len(listings)
 
     fresh: list[tuple[str, Listing, list[Criteria]]] = []
+    known = 0
+    # Where the filtered-out listings were, so a saved search that no profile
+    # covers shows up in the run log instead of vanishing at debug level.
+    filtered_out: Counter = Counter()
     for listing in listings:
         if store.is_known(listing):
             store.touch(listing)
+            known += 1
             continue
         matched = matching_profiles(listing, criteria_set)
         if not matched:
             log.debug("filtered out by every profile: %s", listing.url)
+            filtered_out[listing.city or listing.postal_code or "unknown"] += 1
             continue
         key = store.insert(listing, [p.name for p in matched])
         fresh.append((key, listing, matched))
 
     stats.listings_new = len(fresh)
+    if filtered_out:
+        log.info(
+            "%d listing(s) dropped by the filters: %s",
+            sum(filtered_out.values()),
+            ", ".join(f"{place} x{n}" for place, n in filtered_out.most_common()),
+        )
     log.info(
-        "%d new listing(s) after dedupe and filters, %d verdict(s) to produce",
+        "%d new listing(s) after dedupe and filters (%d already known), "
+        "%d verdict(s) to produce",
         len(fresh),
+        known,
         sum(len(m) for _, _, m in fresh),
     )
 

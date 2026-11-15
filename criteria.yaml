@@ -18,6 +18,12 @@ target_cities:
     postal_codes: ["93100"]
     avg_rent_per_sqm_eur: 15.5
     avg_price_per_sqm_eur: null
+  - name: "Fontenay-sous-Bois"
+    postal_codes: ["94120"]
+    # No reference rent yet: the analysis model estimates it. Fill in to anchor
+    # the yield estimate the way Montreuil's 15.5 does.
+    avg_rent_per_sqm_eur: null
+    avg_price_per_sqm_eur: null
 
 min_surface_m2: 20
 min_rooms: 1
