@@ -19,6 +19,8 @@ from typing import Any, Iterator
 import yaml
 from dotenv import load_dotenv
 
+from .financing import Financing, financing_from_raw
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_CRITERIA_PATH = REPO_ROOT / "criteria.yaml"
 DATA_DIR = REPO_ROOT / "data"
@@ -67,6 +69,9 @@ class Criteria:
     max_listings_per_run: int
     enrichment_fetch_timeout_s: float
     enrichment_max_retries: int
+    # The mortgage the rent should cover; None when criteria.yaml has no
+    # `financing:` block.
+    financing: Financing | None = None
     name: str = DEFAULT_PROFILE_NAME
     label: str | None = None
     raw: dict[str, Any] = field(default_factory=dict, repr=False)
@@ -250,6 +255,7 @@ def _criteria_from_raw(
         max_listings_per_run=int(pipeline.get("max_listings_per_run", 200)),
         enrichment_fetch_timeout_s=float(pipeline.get("enrichment_fetch_timeout_s", 8)),
         enrichment_max_retries=int(pipeline.get("enrichment_max_retries", 1)),
+        financing=financing_from_raw(raw.get("financing")),
         name=name,
         label=label,
         raw=raw,
@@ -351,6 +357,8 @@ if __name__ == "__main__":  # smoke check: python -m scout.config
             )
             + f"notify at {profile.score_threshold_notify}"
         )
+        if profile.financing:
+            print(f"      financing: {profile.financing.describe()}")
         for city in profile.target_cities:
             print(f"      {city.name}: {', '.join(city.postal_codes)}")
     print(

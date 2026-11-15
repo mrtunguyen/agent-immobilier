@@ -26,6 +26,7 @@ from . import analysis as analysis_mod
 from . import configure_stdio, dashboard, dvf, enrich, parsers
 from .config import Criteria, CriteriaSet, Settings, load_criteria_set, load_settings
 from .dedupe import Store
+from .financing import Financing, rent_cover
 from .gmail_client import AlertEmail, GmailClient
 from .notify_telegram import TelegramNotifier
 from .parsers.base import Listing
@@ -122,7 +123,7 @@ def matching_profiles(listing: Listing, criteria_set: CriteriaSet) -> list[Crite
     return [p for p in criteria_set if passes_hard_filters(listing, p)]
 
 
-def _verdict_from_row(row) -> dict:
+def _verdict_from_row(row, financing: Financing | None = None) -> dict:
     """Rebuild the analysis dict from a stored row.
 
     The delivery helpers take the verdict as a dict because that's what the
@@ -145,6 +146,8 @@ def _verdict_from_row(row) -> dict:
         "score": row["score"],
         "analysis": row["analysis"],
         "enrichment_source": row["enrichment_source"],
+        # Not stored: derived from the price, the rent and today's loan terms.
+        **rent_cover(row["price_eur"], row["estimated_monthly_rent"], financing),
     }
 
 
@@ -170,6 +173,7 @@ def deliver_pending(
         p.name: p.score_threshold_notify for p in criteria_set.all_profiles
     }
     labels = {p.name: p.display_name for p in criteria_set.all_profiles}
+    financings = {p.name: p.financing for p in criteria_set.all_profiles}
     default_threshold = criteria_set.base.score_threshold_notify
 
     notifier = (
@@ -192,7 +196,9 @@ def deliver_pending(
 
     for row in rows:
         key, profile = row["key"], row["profile"]
-        verdict = _verdict_from_row(row)
+        verdict = _verdict_from_row(
+            row, financings.get(profile, criteria_set.base.financing)
+        )
         threshold = thresholds.get(profile, default_threshold)
 
         if (

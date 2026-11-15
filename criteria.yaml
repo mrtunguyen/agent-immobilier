@@ -35,6 +35,19 @@ yield_thresholds:
   min_gross_yield_pct: null
   target_gross_yield_pct: 7.0
 
+# The mortgage the rent should pay for. Each listing's monthly payment is
+# computed from its asking price and these terms, and the score's main factor
+# is how much of that payment the estimated rent covers.
+financing:
+  interest_rate_pct: 3.5
+  duration_years: 20
+  # Share of the asking price borrowed. 100 = no down payment; the notary fees
+  # (~8% in the ancien) come from savings and are not borrowed.
+  loan_pct_of_price: 100
+  # Borrower insurance, % of the loan per year. 0.30 is a typical rate, not a
+  # quote: replace it with yours, or 0 to leave insurance out.
+  insurance_rate_pct: 0.30
+
 dpe:
   acceptable_classes: ["A", "B", "C", "D"]
   reject_below: null # e.g. "F" to hard-reject F and G
@@ -55,9 +68,12 @@ dvf:
 scoring:
   # Telegram push fires at or above this score.
   score_threshold_notify: 70
-  weight_yield: 0.30
-  weight_price_vs_dvf: 0.25
-  weight_location: 0.20
+  # Share of the monthly mortgage payment the estimated rent covers. Replaces
+  # the old gross-yield weight: at fixed loan terms the two measure the same
+  # thing, and cover says it in the terms that matter here.
+  weight_rent_cover: 0.40
+  weight_price_vs_dvf: 0.20
+  weight_location: 0.15
   weight_condition_red_flags: 0.25
 
 models:

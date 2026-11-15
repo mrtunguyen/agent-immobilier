@@ -141,6 +141,7 @@
           <th data-sort="num" class="num">€/m²</th>
           <th data-sort="num" class="num">vs DVF</th>
           <th data-sort="num" class="num">Yield</th>
+          <th data-sort="num" class="num" title="Share of the monthly mortgage payment the estimated rent covers">Rent cover</th>
           <th data-sort="text">Status</th>
           <th data-sort="text">Seen</th>
         </tr>
@@ -172,6 +173,10 @@
           </td>
           <td class="num {{ r.delta_class }}" data-value="{{ r.price_vs_dvf_pct if r.price_vs_dvf_pct is not none else 0 }}">{{ r.delta_fmt }}</td>
           <td class="num" data-value="{{ r.gross_yield_pct or 0 }}">{{ r.yield_fmt }}</td>
+          <td class="num {{ r.cover_class }}" data-value="{{ r.rent_cover_pct if r.rent_cover_pct is not none else 0 }}">
+            {{ r.cover_fmt }}
+            {% if r.monthly_payment_eur %}<span class="note">of {{ r.payment_fmt }}</span>{% endif %}
+          </td>
           <td><span class="tag">{{ r.status }}</span></td>
           <td data-value="{{ r.first_seen_at }}">{{ r.first_seen_short }}</td>
         </tr>

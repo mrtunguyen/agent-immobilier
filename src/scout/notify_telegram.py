@@ -67,6 +67,18 @@ def format_listing(listing_row, analysis: dict, profile: str | None = None) -> s
         rent_part = f" (~{_fmt_money(rent)}/mo)" if rent else ""
         lines.append(f"📈 Gross yield {yield_pct:.1f}%{rent_part}")
 
+    payment = analysis.get("monthly_payment_eur")
+    cover = analysis.get("rent_cover_pct")
+    if payment:
+        if cover is None:
+            lines.append(f"🏦 Mortgage {_fmt_money(payment)}/mo (no rent estimate)")
+        else:
+            mark = "✅" if cover >= 100 else "❌"
+            lines.append(
+                f"🏦 {mark} Rent covers {cover:.0f}% of the "
+                f"{_fmt_money(payment)}/mo mortgage"
+            )
+
     if analysis.get("dpe"):
         lines.append(f"🔋 DPE {html.escape(str(analysis['dpe']))}")
 

@@ -18,6 +18,7 @@ from pydantic import BaseModel, Field
 
 from .config import Criteria
 from .dvf import MarketStats
+from .financing import rent_cover
 from .parsers.base import Listing
 
 log = logging.getLogger(__name__)
@@ -58,7 +59,7 @@ real flag).
 - 0-24: fails a hard constraint (out of budget, out of area, far too small).
 
 Be sceptical and concrete. The investor would rather read "priced 12% above the \
-DVF median for the 69003, and the 5.1% yield is below your 5.5% floor" than a \
+DVF median for the 69003, and the rent covers only 82% of the mortgage" than a \
 paragraph of hedging. Write the analysis in English, one short paragraph.\
 """
 
@@ -136,13 +137,31 @@ Gross yield floor: {f"{criteria.min_gross_yield_pct}%" if criteria.min_gross_yie
 Acceptable DPE classes: {", ".join(criteria.dpe_acceptable_classes) or "any"}
 Hard DPE rejection at or below: {criteria.dpe_reject_below or "none"}
 Keywords the investor treats as warning signs: {", ".join(criteria.red_flag_keywords)}
-Scoring weights:
+{_financing_context(criteria)}Scoring weights:
 {weights}
 </investor_criteria>"""
 
 
+def _financing_context(criteria: Criteria) -> str:
+    """The rent-cover goal, as a line of the criteria block (empty without one)."""
+    if criteria.financing is None:
+        return ""
+    return (
+        f"Financing: {criteria.financing.describe()}.\n"
+        "Primary goal: the estimated monthly rent should cover the whole monthly "
+        "mortgage payment, which is given with each listing. Rent cover "
+        "(estimated rent / monthly payment) is the most important factor "
+        "(weight rent_cover): a cover below 100% is a clear weakness that pulls "
+        "the score down in proportion to the shortfall, and state the cover in "
+        "your analysis.\n"
+    )
+
+
 def _listing_context(
-    listing: Listing, market: MarketStats, page_text: str | None
+    listing: Listing,
+    market: MarketStats,
+    page_text: str | None,
+    criteria: Criteria | None = None,
 ) -> str:
     parts = [
         "<listing>",
@@ -156,6 +175,13 @@ def _listing_context(
     ]
     if listing.price_per_sqm:
         parts.append(f"Asking price per m²: {listing.price_per_sqm:,.0f} €/m²")
+    if criteria is not None and criteria.financing and listing.price_eur:
+        loan = criteria.financing.loan_amount(listing.price_eur)
+        payment = criteria.financing.monthly_payment(listing.price_eur)
+        parts.append(
+            f"Monthly mortgage payment at the investor's terms: {payment:,.0f} € "
+            f"(on a {loan:,.0f} € loan)"
+        )
     if listing.description:
         parts.append(f"Description from the alert email: {listing.description}")
     parts.append("</listing>")
@@ -220,7 +246,7 @@ def analyse(
     try:
         response = client.models.generate_content(
             model=criteria.analysis_model,
-            contents=_listing_context(listing, market, page_text),
+            contents=_listing_context(listing, market, page_text, criteria),
             config=types.GenerateContentConfig(
                 # Identical for every listing this profile judges, which is what
                 # makes Gemini's implicit prefix caching worth anything here.
@@ -261,4 +287,7 @@ def analyse(
         "score": parsed.score,
         "analysis": parsed.analysis,
         "enrichment_source": "full_page" if page_text else "email_only",
+        **rent_cover(
+            listing.price_eur, parsed.estimated_monthly_rent, criteria.financing
+        ),
     }

@@ -16,6 +16,7 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from .config import DEFAULT_PROFILE_NAME, DOCS_DIR, CriteriaSet
 from .dedupe import VALID_STATUSES, Store
+from .financing import rent_cover
 
 log = logging.getLogger(__name__)
 
@@ -45,6 +46,7 @@ def _row_view(
     labels: dict[str, str],
     default_threshold: int,
     min_comparable: int = 0,
+    financings: dict | None = None,
 ) -> dict:
     location = " ".join(p for p in (row["city"], row["postal_code"]) if p) or "—"
     title = (row["title"] or row["url"] or "Listing").strip()
@@ -64,6 +66,12 @@ def _row_view(
     first_seen = row["first_seen_at"] or ""
     profile = row["profile"] or DEFAULT_PROFILE_NAME
     threshold = thresholds.get(profile, default_threshold)
+    cover = rent_cover(
+        row["price_eur"],
+        row["estimated_monthly_rent"],
+        (financings or {}).get(profile),
+    )
+    cover_pct = cover["rent_cover_pct"]
 
     return {
         "title": title[:140],
@@ -101,6 +109,13 @@ def _row_view(
         "yield_fmt": (
             f"{row['gross_yield_pct']:.1f}%" if row["gross_yield_pct"] else "—"
         ),
+        "monthly_payment_eur": cover["monthly_payment_eur"],
+        "payment_fmt": _fmt_int(cover["monthly_payment_eur"], " €/mo"),
+        "rent_cover_pct": cover_pct,
+        "cover_fmt": f"{cover_pct:.0f}%" if cover_pct is not None else "—",
+        "cover_class": (
+            "" if cover_pct is None else ("delta-down" if cover_pct >= 100 else "delta-up")
+        ),
         "analysis": (row["analysis"] or "")[:280],
         "red_flags": "; ".join(red_flags[:3]),
         "email_only": row["enrichment_source"] == "email_only",
@@ -135,14 +150,18 @@ def render(
         labels = {p.name: p.display_name for p in known}
         default_threshold = criteria_set.base.score_threshold_notify
         min_comparable = criteria_set.base.dvf_min_comparable_transactions
+        financings = {p.name: p.financing for p in known}
     else:
         thresholds = {DEFAULT_PROFILE_NAME: threshold}
         labels = {}
         default_threshold = threshold
         min_comparable = 0
+        financings = {}
 
     rows = [
-        _row_view(row, thresholds, labels, default_threshold, min_comparable)
+        _row_view(
+            row, thresholds, labels, default_threshold, min_comparable, financings
+        )
         for row in store.all_listings()
     ]
     runs = store.last_runs(limit=1)
