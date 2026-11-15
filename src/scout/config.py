@@ -232,7 +232,8 @@ def _criteria_from_raw(
         min_surface_m2=float(raw.get("min_surface_m2", 0)),
         min_rooms=int(raw.get("min_rooms", 0)),
         max_floor_ground_ok=bool(raw.get("max_floor_ground_ok", True)),
-        min_gross_yield_pct=float(yields.get("min_gross_yield_pct", 0)),
+        # null or absent means no floor.
+        min_gross_yield_pct=float(yields.get("min_gross_yield_pct") or 0),
         target_gross_yield_pct=float(yields.get("target_gross_yield_pct", 0)),
         dpe_acceptable_classes=list(dpe.get("acceptable_classes") or []),
         dpe_reject_below=dpe.get("reject_below"),
@@ -343,8 +344,12 @@ if __name__ == "__main__":  # smoke check: python -m scout.config
         print(
             f"  [{profile.name}] up to {budget}, "
             f">={profile.min_surface_m2:g} m2, >={profile.min_rooms} rooms, "
-            f"yield >={profile.min_gross_yield_pct}%, "
-            f"notify at {profile.score_threshold_notify}"
+            + (
+                f"yield >={profile.min_gross_yield_pct}%, "
+                if profile.min_gross_yield_pct
+                else "no yield floor, "
+            )
+            + f"notify at {profile.score_threshold_notify}"
         )
         for city in profile.target_cities:
             print(f"      {city.name}: {', '.join(city.postal_codes)}")

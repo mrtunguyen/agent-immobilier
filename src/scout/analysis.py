@@ -132,7 +132,7 @@ Target areas:
 Minimum surface: {criteria.min_surface_m2} m²
 Minimum rooms: {criteria.min_rooms}
 Ground floor acceptable: {"yes" if criteria.max_floor_ground_ok else "no — flag it"}
-Gross yield floor: {criteria.min_gross_yield_pct}% (target {criteria.target_gross_yield_pct}%)
+Gross yield floor: {f"{criteria.min_gross_yield_pct}%" if criteria.min_gross_yield_pct else "none"} (target {criteria.target_gross_yield_pct}%)
 Acceptable DPE classes: {", ".join(criteria.dpe_acceptable_classes) or "any"}
 Hard DPE rejection at or below: {criteria.dpe_reject_below or "none"}
 Keywords the investor treats as warning signs: {", ".join(criteria.red_flag_keywords)}

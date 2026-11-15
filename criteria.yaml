@@ -31,7 +31,8 @@ min_rooms: 1
 max_floor_ground_ok: false
 
 yield_thresholds:
-  min_gross_yield_pct: 5.5
+  # null = no floor; yield still counts toward the score via the target.
+  min_gross_yield_pct: null
   target_gross_yield_pct: 7.0
 
 dpe:
