@@ -14,7 +14,10 @@ Two lookups per postal code:
   2. files.data.gouv.fr — one CSV per commune per year.
 
 Results are cached per postal code in SQLite: DVF is republished roughly twice
-a year, so refetching per run would be pure waste.
+a year, so refetching per run would be pure waste. Only answers are cached: a
+lookup that failed on the network is retried next run, and a postal code that
+came back with no sales is retried after a day rather than written off for the
+full cache period.
 """
 
 from __future__ import annotations
@@ -42,6 +45,9 @@ MIN_SURFACE_M2 = 9.0
 
 # Re-fetch a commune at most this often.
 CACHE_MAX_AGE_DAYS = 90
+# An empty result is cheap to retry and expensive to keep: it leaves every
+# listing in that postal code with no market comparison.
+EMPTY_CACHE_MAX_AGE_DAYS = 1
 
 # Extra years to try past the lookback window, covering the unpublished current
 # year and any year a small commune recorded no sales.
@@ -77,8 +83,16 @@ class MarketStats:
         return self.sample_size >= max(1, self.min_comparable)
 
 
+class LookupFailed(Exception):
+    """A DVF source could not be reached — not the same as "no sales here"."""
+
+
 def insee_code_for_postal_code(postal_code: str, client: httpx.Client) -> str | None:
-    """Resolve a postal code to the INSEE code DVF files are keyed by."""
+    """Resolve a postal code to the INSEE code DVF files are keyed by.
+
+    None means geo.api.gouv.fr answered and knows no such postal code;
+    LookupFailed means it could not be asked.
+    """
     for params in (
         {"codePostal": postal_code, "type": "arrondissement-municipal"},
         {"codePostal": postal_code},
@@ -87,9 +101,9 @@ def insee_code_for_postal_code(postal_code: str, client: httpx.Client) -> str | 
             response = client.get(GEO_API, params=params, timeout=REQUEST_TIMEOUT)
             response.raise_for_status()
             communes = response.json()
-        except Exception:
+        except Exception as exc:
             log.warning("geo.api.gouv.fr lookup failed for %s", postal_code)
-            return None
+            raise LookupFailed(postal_code) from exc
         if communes:
             return communes[0].get("code")
     return None
@@ -142,7 +156,8 @@ def _mutation_price_per_sqm(
 def _fetch_year(
     insee: str, year: int, postal_code: str, property_types: set[str],
     client: httpx.Client,
-) -> list[float]:
+) -> list[float] | None:
+    """€/m² of each qualifying sale that year; [] for none, None if unreachable."""
     url = f"{DVF_BASE}/{year}/communes/{insee[:2]}/{insee}.csv"
     try:
         response = client.get(url, timeout=REQUEST_TIMEOUT)
@@ -151,7 +166,7 @@ def _fetch_year(
         response.raise_for_status()
     except Exception:
         log.warning("DVF fetch failed for %s %s", insee, year)
-        return []
+        return None
 
     mutations: dict[str, list[dict[str, str]]] = defaultdict(list)
     reader = csv.DictReader(io.StringIO(response.text))
@@ -170,7 +185,9 @@ def _fetch_year(
     return prices
 
 
-def _cache_is_fresh(fetched_at: str | None) -> bool:
+def _cache_is_fresh(
+    fetched_at: str | None, max_age_days: int = CACHE_MAX_AGE_DAYS
+) -> bool:
     if not fetched_at:
         return False
     try:
@@ -180,7 +197,7 @@ def _cache_is_fresh(fetched_at: str | None) -> bool:
     if stamp.tzinfo is None:
         stamp = stamp.replace(tzinfo=timezone.utc)
     age = datetime.now(timezone.utc) - stamp
-    return age.days < CACHE_MAX_AGE_DAYS
+    return age.days < max_age_days
 
 
 def market_stats(
@@ -198,7 +215,12 @@ def market_stats(
     own_estimate = float(city.avg_price_per_sqm_eur) if city and city.avg_price_per_sqm_eur else None
 
     cached = store.get_dvf(postal_code)
-    if cached and _cache_is_fresh(cached["fetched_at"]):
+    max_age = (
+        CACHE_MAX_AGE_DAYS
+        if cached and cached["median_per_sqm"] is not None
+        else EMPTY_CACHE_MAX_AGE_DAYS
+    )
+    if cached and _cache_is_fresh(cached["fetched_at"], max_age):
         return MarketStats(
             postal_code,
             cached["median_per_sqm"],
@@ -211,9 +233,15 @@ def market_stats(
 
     owns_client = client is None
     client = client or httpx.Client(follow_redirects=True)
+    prices: list[float] = []
+    # Set when any source was unreachable: an empty result is then not a fact
+    # about the market, and must not be cached as one.
+    failed = False
     try:
-        insee = insee_code_for_postal_code(postal_code, client)
-        prices: list[float] = []
+        try:
+            insee = insee_code_for_postal_code(postal_code, client)
+        except LookupFailed:
+            insee, failed = None, True
         if insee:
             property_types = set(criteria.dvf_property_types)
             years_with_data = 0
@@ -225,7 +253,9 @@ def market_stats(
             oldest_year = year - criteria.dvf_lookback_years - MAX_EMPTY_YEARS
             while years_with_data < criteria.dvf_lookback_years and year > oldest_year:
                 found = _fetch_year(insee, year, postal_code, property_types, client)
-                if found:
+                if found is None:
+                    failed = True
+                elif found:
                     prices.extend(found)
                     years_with_data += 1
                 year -= 1
@@ -243,9 +273,12 @@ def market_stats(
             min_comparable,
             own_estimate,
         )
-        store.put_dvf(
-            postal_code, stats.median_per_sqm, stats.mean_per_sqm, stats.sample_size
-        )
+        # A year that failed to download makes this a partial sample: use it,
+        # but fetch again next run rather than keep it for the cache period.
+        if not failed:
+            store.put_dvf(
+                postal_code, stats.median_per_sqm, stats.mean_per_sqm, stats.sample_size
+            )
         log.info(
             "DVF %s: median %.0f €/m² from %d sales%s",
             postal_code,
@@ -264,5 +297,8 @@ def market_stats(
             postal_code, own_estimate, None, 0, "criteria_fallback", min_comparable
         )
 
-    store.put_dvf(postal_code, None, None, 0)
+    if failed:
+        log.warning("DVF %s: lookup failed, not cached — retried next run", postal_code)
+    else:
+        store.put_dvf(postal_code, None, None, 0)
     return MarketStats(postal_code, None, None, 0, "unavailable", min_comparable)

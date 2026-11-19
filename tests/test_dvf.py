@@ -149,3 +149,96 @@ def test_the_criteria_fallback_is_never_treated_as_confident():
     """A hand-typed estimate is not a sample of recorded sales."""
     guess = MarketStats("93100", 5500.0, None, 0, "criteria_fallback", 5)
     assert guess.is_confident is False
+
+
+# ------------------------------------------------- caching around failures
+#
+# market_stats against a mocked network: a lookup that failed must never be
+# remembered as "no sales here", and an empty answer must not stick for months.
+
+import httpx
+
+from scout.config import load_criteria_set
+from scout.dedupe import Store
+from scout.dvf import EMPTY_CACHE_MAX_AGE_DAYS, market_stats
+
+from test_profiles import BASE_YAML, write_criteria
+
+CSV_HEADER = "id_mutation,nature_mutation,valeur_fonciere,type_local,surface_reelle_bati,code_postal\n"
+CSV_ONE_SALE = CSV_HEADER + "2024-1,Vente,280000,Appartement,70,69003\n"   # 4 000 €/m²
+
+
+def _client(geo_status=200, year_status=200, failing_years=()):
+    def handler(request: httpx.Request) -> httpx.Response:
+        if "geo.api.gouv.fr" in request.url.host:
+            if geo_status != 200:
+                return httpx.Response(geo_status)
+            return httpx.Response(200, json=[{"code": "69383"}])
+        year = int(request.url.path.split("/")[4])
+        if year in failing_years:
+            return httpx.Response(500)
+        if year_status == 404:
+            return httpx.Response(404)
+        return httpx.Response(200, text=CSV_ONE_SALE)
+
+    return httpx.Client(transport=httpx.MockTransport(handler))
+
+
+@pytest.fixture
+def criteria(tmp_path):
+    return load_criteria_set(write_criteria(tmp_path, BASE_YAML)).base
+
+
+@pytest.fixture
+def store(tmp_path):
+    with Store(tmp_path / "db.sqlite3") as s:
+        yield s
+
+
+def test_a_failed_geo_lookup_is_not_cached(store, criteria):
+    stats = market_stats("69003", store, criteria, _client(geo_status=503))
+    assert stats.source == "unavailable"
+    assert store.get_dvf("69003") is None          # retried next run
+
+
+def test_a_genuine_no_sales_answer_is_cached(store, criteria):
+    stats = market_stats("69003", store, criteria, _client(year_status=404))
+    assert stats.source == "unavailable"
+    assert store.get_dvf("69003")["sample_size"] == 0
+
+
+def test_an_empty_cache_entry_is_retried_after_a_day(store, criteria):
+    store.put_dvf("69003", None, None, 0)
+    stale = datetime.now(timezone.utc) - timedelta(days=EMPTY_CACHE_MAX_AGE_DAYS + 1)
+    store.conn.execute(
+        "UPDATE dvf_cache SET fetched_at = ? WHERE cache_key = '69003'",
+        (stale.isoformat(),),
+    )
+
+    stats = market_stats("69003", store, criteria, _client())
+    assert stats.source == "dvf"
+    assert stats.median_per_sqm == 4000.0
+    assert store.get_dvf("69003")["median_per_sqm"] == 4000.0
+
+
+def test_a_real_median_is_kept_for_the_full_cache_period(store, criteria):
+    store.put_dvf("69003", 4000.0, 4000.0, 12)
+    week_old = datetime.now(timezone.utc) - timedelta(days=7)
+    store.conn.execute(
+        "UPDATE dvf_cache SET fetched_at = ? WHERE cache_key = '69003'",
+        (week_old.isoformat(),),
+    )
+    # Any network call would fail: the cached median must be served as is.
+    stats = market_stats("69003", store, criteria, _client(geo_status=503))
+    assert stats.source == "dvf_cache"
+    assert stats.median_per_sqm == 4000.0
+
+
+def test_a_partial_sample_is_used_but_not_cached(store, criteria):
+    this_year = datetime.now(timezone.utc).year
+    stats = market_stats(
+        "69003", store, criteria, _client(failing_years={this_year - 1})
+    )
+    assert stats.source == "dvf"
+    assert stats.median_per_sqm == 4000.0
+    assert store.get_dvf("69003") is None
